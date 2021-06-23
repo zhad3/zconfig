@@ -1,0 +1,16 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/zconfig
+zconfig.so
+zconfig.dylib
+zconfig.dll
+zconfig.a
+zconfig.lib
+zconfig-test-*
+*.exe
+*.o
+*.obj
+*.lst
+bin/

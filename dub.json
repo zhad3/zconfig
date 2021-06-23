@@ -1,0 +1,11 @@
+{
+	"authors": [
+		"zhad3"
+	],
+	"copyright": "Copyright © 2021, zhad3",
+	"description": "A simple config file generator and parser",
+	"license": "MIT",
+	"name": "zconfig",
+    "targetType": "library",
+    "targetPath": "bin"
+}
