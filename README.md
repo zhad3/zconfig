@@ -7,7 +7,7 @@ The library provides annotations which are used on plain old data structs which
 give them information such as descriptions or other shortnames.
 
 The actual parsing is not done by this library but is directly feeded into D's
-[https://dlang.org/phobos/std_getopt.html#.getopt](getopt function). This library
+[getopt function](https://dlang.org/phobos/std_getopt.html#.getopt). This library
 just parses a config file and generates arguments for getopt out of them.
 
 The benefit by using getopt is that you essentially synchronize the command line
