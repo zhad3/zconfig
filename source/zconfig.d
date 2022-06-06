@@ -472,6 +472,13 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args)
                 argMap[optionIdent] = 1;
             }
         }
+        // Check for '-t5' cases where the option 't' has the value '5'
+        else if (arg.length > 2 && arg[0] == optionChar && arg[1] != optionChar &&
+                (cast(string) [arg[1]]) in shortnameLookupMap)
+        {
+            optionName = shortnameLookupMap[cast(string) [arg[1]]];
+            argMap[optionName] = 1;
+        }
         else if (arg.length > 1 && arg[0] == optionChar)
         {
             optionIdent = arg[1 .. optionIdentIndex];
@@ -557,100 +564,130 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args)
 
 unittest
 {
-     struct MyConfig
-     {
-         @Desc("My cool number.")
-         int number;
-         @Desc("Print verbose messages.")
-         bool verbose = false;
-     }
+    struct MyConfig
+    {
+        @Desc("My cool number.")
+        int number;
+        @Desc("Print verbose messages.")
+        bool verbose = false;
+    }
 
-     string[] cliArgs = ["--number=5"];
-     string[] configArgs = getConfigArguments!MyConfig("test-conf/test.conf", cliArgs);
+    string[] cliArgs = ["--number=5"];
+    string[] configArgs = getConfigArguments!MyConfig("test-conf/test.conf", cliArgs);
 
-     import std.conv : to;
+    import std.conv : to;
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
 }
 
 unittest
 {
-     struct MyConfig
-     {
-         @ConfigFile @Short("c") @Desc("Alternative config file")
-         string config;
-         @Desc("My cool number.")
-         int number;
-         @Desc("Print verbose messages.")
-         bool verbose = false;
-     }
+    struct MyConfig
+    {
+        @ConfigFile @Short("c") @Desc("Alternative config file")
+        string config;
+        @Desc("My cool number.")
+        int number;
+        @Desc("Print verbose messages.")
+        bool verbose = false;
+    }
 
-     string[] cliArgs = ["--number=5", "-c", "test-conf/test.conf"];
-     string[] configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
+    string[] cliArgs = ["--number=5", "-c", "test-conf/test.conf"];
+    string[] configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
-     import std.conv : to;
+    import std.conv : to;
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
 
-     // --- Config as last argument
+    // --- Config as last argument
 
-     cliArgs = ["--number=5", "-c", "test-conf/test.conf"];
-     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
+    cliArgs = ["--number=5", "-c", "test-conf/test.conf"];
+    configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
-     import std.conv : to;
+    import std.conv : to;
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
 
-     // -- Config as last argument with long name and no space
+    // -- Config as last argument with long name and no space
 
-     cliArgs = ["--number=5", "--config=test-conf/test.conf"];
-     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
+    cliArgs = ["--number=5", "--config=test-conf/test.conf"];
+    configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
-     import std.conv : to;
+    import std.conv : to;
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
 
-     // -- Config does not exist
+    // -- Config does not exist
 
-     cliArgs = ["--number=5", "-c", "i_do_not_exist.conf"];
-     configArgs = getConfigArguments!MyConfig("test-conf/test.conf", cliArgs);
+    cliArgs = ["--number=5", "-c", "i_do_not_exist.conf"];
+    configArgs = getConfigArguments!MyConfig("test-conf/test.conf", cliArgs);
 
-     assert(configArgs.length == 0);
+    assert(configArgs.length == 0);
 
-     // -- Config as first argument with long name and no space
+    // -- Config as first argument with long name and no space
 
-     cliArgs = ["--config=test-conf/test.conf", "--number=5"];
-     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
+    cliArgs = ["--config=test-conf/test.conf", "--number=5"];
+    configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
 
-     // -- Config as first argument
+    // -- Config as first argument
 
-     cliArgs = ["-c", "test-conf/test.conf", "--number=5"];
-     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
+    cliArgs = ["-c", "test-conf/test.conf", "--number=5"];
+    configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
 
-     // -- Use last provided config name
+    // -- Use last provided config name
 
-     cliArgs = ["-c", "i_also_do_not_exist.conf", "--number=5", "-c", "test-conf/test.conf"];
-     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
+    cliArgs = ["-c", "i_also_do_not_exist.conf", "--number=5", "-c", "test-conf/test.conf"];
+    configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
-     assert(configArgs.length == 2);
-     assert(configArgs[0] == "--verbose");
-     assert(configArgs[1] == "false");
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--verbose");
+    assert(configArgs[1] == "false");
+}
+
+unittest
+{
+    struct MyConfig
+    {
+        @Short("t")
+        int timeout;
+    }
+
+    string[] cliArgs = ["-t10"];
+    string[] configArgs = getConfigArguments!MyConfig("test-conf/test-short.conf", cliArgs);
+
+    assert(configArgs.length == 0);
+
+    // --
+
+    cliArgs = ["-t 5"];
+    configArgs = getConfigArguments!MyConfig("test-conf/test-short.conf", cliArgs);
+
+    assert(configArgs.length == 0);
+
+    // --
+
+    cliArgs = [];
+    configArgs = getConfigArguments!MyConfig("test-conf/test-short.conf", cliArgs);
+
+    assert(configArgs.length == 2);
+    assert(configArgs[0] == "--timeout");
+    assert(configArgs[1] == "200");
 }
 
 /**
