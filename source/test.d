@@ -4,22 +4,34 @@ import zconfig;
 
 void main() {}
 
-void maxValueHandler(string value, out int confValue)
+struct MinMax {
+    int min;
+    int max;
+}
+
+void minMaxHandler(string value, out MinMax confValue)
 {
-    confValue = 200;
+    import std.string : split;
+    import std.conv : to;
+    auto segments = value.split("-");
+
+    confValue.min = segments[0].to!int;
+    confValue.max = segments[1].to!int;
 }
 
 unittest
 {
     struct MyConfig
     {
-        @Handler!maxValueHandler
-        int maxValue;
+        @Handler!minMaxHandler
+        MinMax minMax;
     }
 
-    string[] cliArgs = ["foo", "--maxValue=10"];
+    string[] cliArgs = ["foo", "--minMax=5-10"];
 
     bool helpWanted = false;
     MyConfig conf = initializeConfig!(MyConfig, "Usage")(cliArgs, helpWanted);
-    assert(conf.maxValue == 200);
+    assert(conf.minMax.min == 5);
+    assert(conf.minMax.max == 10);
 }
+

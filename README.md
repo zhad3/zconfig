@@ -23,6 +23,7 @@ arguments and the config file options with just one struct.
 | @ConfigFile | Mark a struct member to be the filename of the to-be-read config file. This is a special annotation and only be provided to one struct member. It also can only be provided through the command line. |
 | @PassThrough | Same as getopt passThrough. |
 | @Required | Same as getopt required. If the option is not provided an error is thrown. |
+| @Handler | Call a custom handler function for the annotated struct member which is responsible for setting its value. |
 
 ## API
 | Function | Description |
@@ -58,7 +59,7 @@ enum usage = "My program version 1.0 does things.";
 
 int main(string[] args)
 {
-    string[] configArgs = getConfigArguments!Config("myconf.conf", args);
+    string[] configArgs = getConfigArguments!MyConfig("myconf.conf", args);
 
     if (configArgs.length > 0)
     {
@@ -117,3 +118,42 @@ int main(string[] args)
 ;port=1234
 
 ```
+
+## Handler/Callback example
+It is possible to define a custom handler to set a config struct member.  
+The following restrictions apply on the handler function:
+ - Have two parameters.
+ - The first parameter is the string value as given through
+   `args` and must therefore have type string.
+ - The second parameter must be declared `ref` or `out` and
+   must have the same type as the config member. This is the
+   config struct's variable the handler is supposed to set.
+
+
+Here is an example that parses a string (provided through a config file or the CLI arguments) and extracts the `x` and `y` coordinate to set for the config struct.
+
+
+```d
+struct Point
+{
+    int x;
+    int y;
+}
+
+void pointHandler(string value, out Point confValue)
+{
+    import std.string : split;
+    import std.conv : to;
+    auto segments = value.split("x");
+
+    confValue.x = segments[0].to!int;
+    confValue.y = segments[1].to!int;
+}
+
+struct MyConfig
+{
+    @Desc("Defines a point") @Handler!pointHandler
+    Point coordinate;
+}
+```
+Calling the program with e.g. `./myapp --coordinate=20x62` will call the `pointHandler` with `value="20x62"`. It will then get split and the respective fields are set with the resulting config file having `MyConfig.coordinate.x = 20` and `MyConfig.coordinate.y = 62`.
