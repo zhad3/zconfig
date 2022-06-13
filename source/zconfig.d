@@ -183,23 +183,33 @@ struct Short
  *
  * Examples:
  * ---
- * void maxValueHandler(string value, out int confValue)
+ * struct MinMax {
+ *     int min;
+ *     int max;
+ * }
+ *
+ * void minMaxHandler(string value, out MinMax confValue)
  * {
- *     confValue = 200;
+ *     import std.string : split;
+ *     import std.conv : to;
+ *     auto segments = value.split("-");
+ *
+ *     confValue.min = segments[0].to!int;
+ *     confValue.max = segments[1].to!int;
  * }
  *
  * struct MyConfig
  * {
- *     @Handler!maxValueHandler
- *     int maxValue;
+ *     @Handler!minMaxHandler
+ *     MinMax minMax;
  * }
  * ---
- * In the above example `maxValue` will be set to 200 if any the
- * config member `maxValue` is provided through the conf file or
- * through the CLI (`args`).
+ * In the above example `minMax` will be set to {min:5, max:10}
+ * if a conf value of `"5-10"` is provided through the conf file
+ * or the CLI args.
  *
- * Calling the program via `./myapp --maxValue=10` will call the
- * handler function with the `value` parameter being `"10"`.
+ * Calling the program via `./myapp --minMax=5-10` will call the
+ * handler function with the `value` parameter being `"5-10"`.
  */
 struct Handler(alias T)
 {
@@ -318,11 +328,11 @@ alias getHandler(alias member) = getUDAs!(member, Handler)[0].handler;
 
 bool isValidHandler(alias handler, alias memberType)()
 {
-    import std.traits : isFunction, Parameters, ParameterStorageClass, ParameterStorageClassTuple;
+    import std.traits : isCallable, Parameters, ParameterStorageClass, ParameterStorageClassTuple;
     import std.exception : enforce;
     import std.conv : to;
 
-    if(isFunction!handler) {
+    static if(isCallable!handler) {
         string ident = __traits(identifier, handler);
 
         alias params = Parameters!handler;
@@ -869,6 +879,10 @@ void writeExampleConfigFile(ConfigType)(const string filename)
         static if (isArray!(typeof(member)) && !isSomeString!(typeof(member)))
         {
             string defaultValue = format("%-(%s,%)", member);
+        }
+        else static if (is(typeof(member) == struct))
+        {
+            string defaultValue = "";
         }
         else
         {
