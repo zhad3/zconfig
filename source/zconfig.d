@@ -165,7 +165,48 @@ struct Short
     string shortname;
 }
 
-private struct Argument
+/**
+ * Defines a custom handler function that gets called when
+ * getopt parses the option annotated with this handler.
+ *
+ * The signature of the handler must meet the following
+ * requirements:
+ * - Have two parameters.
+ * - The first parameter is the string value as given through
+ *   `args` and must therefore have type string.
+ * - The second parameter must be declared `ref` or `out` and
+ *   must have the same type as the config member. This is the
+ *   config struct's variable the handler is supposed to set.
+ *
+ * The function gets imported like any other function through
+ * modules at compile time.
+ *
+ * Examples:
+ * ---
+ * void maxValueHandler(string value, out int confValue)
+ * {
+ *     confValue = 200;
+ * }
+ *
+ * struct MyConfig
+ * {
+ *     @Handler!maxValueHandler
+ *     int maxValue;
+ * }
+ * ---
+ * In the above example `maxValue` will be set to 200 if any the
+ * config member `maxValue` is provided through the conf file or
+ * through the CLI (`args`).
+ *
+ * Calling the program via `./myapp --maxValue=10` will call the
+ * handler function with the `value` parameter being `"10"`.
+ */
+struct Handler(alias T)
+{
+    alias handler = T;
+}
+
+private struct Argument(alias T)
 {
     string section;
     string description;
@@ -174,6 +215,7 @@ private struct Argument
     bool configFile = false;
     bool passThrough = false;
     bool required = false;
+    alias handler = T;
 }
 
 /// Do not serialize and deserialize this option from the config file.
@@ -258,6 +300,7 @@ ConfigType initializeConfig(ConfigType, string usage)(ref string[] args, out boo
 {
     ConfigType newConf;
     arraySep = ",";
+    mixin(generateHandlerProxyFunctions!(ConfigType, newConf.stringof));
     mixin(`auto helpInformation = getopt(`, args.stringof,
             generateGetoptArgumentList!(ConfigType, newConf.stringof), `);`);
     if (helpInformation.helpWanted)
@@ -266,6 +309,70 @@ ConfigType initializeConfig(ConfigType, string usage)(ref string[] args, out boo
         helpWanted = true;
     }
     return newConf;
+}
+
+import std.traits : hasUDA, getUDAs;
+
+alias hasHandler(alias member) = hasUDA!(member, Handler);
+alias getHandler(alias member) = getUDAs!(member, Handler)[0].handler;
+
+bool isValidHandler(alias handler, alias memberType)()
+{
+    import std.traits : isFunction, Parameters, ParameterStorageClass, ParameterStorageClassTuple;
+    import std.exception : enforce;
+    import std.conv : to;
+
+    if(isFunction!handler) {
+        string ident = __traits(identifier, handler);
+
+        alias params = Parameters!handler;
+        enforce(params.length == 2LU, "Number of Handler '" ~ ident ~ "' arguments is wrong. Expected 2 got " ~ params.length.to!string);
+        enforce(is(params[0] == string), "First argument of Handler '" ~ ident ~ "' must be a string");
+        enforce(is(params[1] == memberType), "Second argument of Handler '" ~ ident ~ "' must be the same type as the config struct member type: " ~ memberType.stringof);
+
+        alias psc = ParameterStorageClassTuple!handler;
+        enforce(psc[1] == ParameterStorageClass.ref_ || psc[1] == ParameterStorageClass.out_, 
+                "Second argument of Handler '" ~ ident ~ "' must be declared 'out' or 'ref'");
+
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+}
+
+private string generateHandlerProxyFunctions(ConfigType, string configStructName)()
+{
+    string[] functions;
+
+    foreach (memberName; __traits(allMembers, ConfigType))
+    {
+        static if (hasHandler!(__traits(getMember, ConfigType, memberName)))
+        {
+            import std.format : format;
+
+            alias handler = getHandler!(__traits(getMember, ConfigType, memberName));
+
+            static if (isValidHandler!(handler, typeof(__traits(getMember, ConfigType, memberName))))
+            {
+                import std.traits : moduleName;
+
+                string handlerIdent = __traits(identifier, handler);
+                functions ~= format(q{
+                    void %1$s_proxy(string option, string value) {
+                        import %4$s : %1$s;
+                        %1$s(value, %2$s.%3$s);
+                    }
+                }, handlerIdent, configStructName, memberName, moduleName!handler);
+            }
+        }
+    }
+
+    import std.array : join;
+
+    return join(functions, "\n");
 }
 
 private string generateGetoptArgumentList(ConfigType, string configStructName)()
@@ -310,7 +417,15 @@ private string generateGetoptArgumentList(ConfigType, string configStructName)()
                 arglist ~= `,"` ~ argument.description ~ ` Default: ` ~
                     defaultValue ~ `"`;
             }
-            arglist ~= ",&" ~ configStructName ~ "." ~ memberName;
+
+            static if (isValidHandler!(argument.handler, typeof(__traits(getMember, ConfigType, memberName))))
+            {
+                arglist ~= ",&" ~ __traits(identifier, argument.handler) ~ "_proxy";
+            }
+            else
+            {
+                arglist ~= ",&" ~ configStructName ~ "." ~ memberName;
+            }
         }
         return arglist;
     }
@@ -320,10 +435,22 @@ private string generateGetoptArgumentList(ConfigType, string configStructName)()
     }
 }
 
-private Argument getConfigMemberUDAs(ConfigType, string memberName)()
+private auto getConfigMemberUDAs(ConfigType, string memberName)()
 {
-    Argument arg;
-    foreach (attr; __traits(getAttributes, __traits(getMember, ConfigType, memberName)))
+    import std.traits : isInstanceOf;
+
+    alias attributes = __traits(getAttributes, __traits(getMember, ConfigType, memberName));
+    static if (hasHandler!(__traits(getMember, ConfigType, memberName)))
+    {
+        alias handler = getHandler!(__traits(getMember, ConfigType, memberName));
+    }
+    else
+    {
+        alias handler = void;
+    }
+
+    Argument!handler arg;
+    foreach (attr; attributes)
     {
         static if (is(typeof(attr) == Section))
         {
@@ -689,6 +816,7 @@ unittest
     assert(configArgs[0] == "--timeout");
     assert(configArgs[1] == "200");
 }
+
 
 /**
  * Writes an example config file to the provided filename.
