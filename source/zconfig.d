@@ -630,7 +630,7 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args)
                 argMap[optionIdent] = 1;
             }
         }
-        if (optionName == configFileMember)
+        if (haveCustomConfigFile && optionName == configFileMember)
         {
             if (optionIdentIndex < arg.length)
             {
@@ -731,7 +731,7 @@ unittest
         bool verbose = false;
     }
 
-    string[] cliArgs = ["--number=5", "-c", "test-conf/test.conf"];
+    string[] cliArgs = ["foo", "--number=5", "-c", "test-conf/test.conf"];
     string[] configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
     import std.conv : to;
@@ -742,7 +742,7 @@ unittest
 
     // --- Config as last argument
 
-    cliArgs = ["--number=5", "-c", "test-conf/test.conf"];
+    cliArgs = ["foo", "--number=5", "-c", "test-conf/test.conf"];
     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
     import std.conv : to;
@@ -753,7 +753,7 @@ unittest
 
     // -- Config as last argument with long name and no space
 
-    cliArgs = ["--number=5", "--config=test-conf/test.conf"];
+    cliArgs = ["foo", "--number=5", "--config=test-conf/test.conf"];
     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
     import std.conv : to;
@@ -764,14 +764,14 @@ unittest
 
     // -- Config does not exist
 
-    cliArgs = ["--number=5", "-c", "i_do_not_exist.conf"];
+    cliArgs = ["foo", "--number=5", "-c", "i_do_not_exist.conf"];
     configArgs = getConfigArguments!MyConfig("test-conf/test.conf", cliArgs);
 
     assert(configArgs.length == 0);
 
     // -- Config as first argument with long name and no space
 
-    cliArgs = ["--config=test-conf/test.conf", "--number=5"];
+    cliArgs = ["foo", "--config=test-conf/test.conf", "--number=5"];
     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
     assert(configArgs.length == 2);
@@ -780,7 +780,7 @@ unittest
 
     // -- Config as first argument
 
-    cliArgs = ["-c", "test-conf/test.conf", "--number=5"];
+    cliArgs = ["foo", "-c", "test-conf/test.conf", "--number=5"];
     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
     assert(configArgs.length == 2);
@@ -789,12 +789,21 @@ unittest
 
     // -- Use last provided config name
 
-    cliArgs = ["-c", "i_also_do_not_exist.conf", "--number=5", "-c", "test-conf/test.conf"];
+    cliArgs = ["foo", "-c", "i_also_do_not_exist.conf", "--number=5", "-c", "test-conf/test.conf"];
     configArgs = getConfigArguments!MyConfig("i_do_not_exist.conf", cliArgs);
 
     assert(configArgs.length == 2);
     assert(configArgs[0] == "--verbose");
     assert(configArgs[1] == "false");
+
+    struct MyConfig2
+    {
+        bool test;
+    }
+
+    cliArgs = ["foo", "somevalue", "more=a"];
+    configArgs = getConfigArguments!MyConfig2("a_default_config.conf", cliArgs);
+    assert(configArgs.length == 0);
 }
 
 unittest
