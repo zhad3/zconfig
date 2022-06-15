@@ -650,9 +650,19 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args)
 
     import std.exception : ErrnoException;
     import std.stdio : stderr;
+    import std.file : exists;
 
     string[string] confMap;
     File inFile;
+
+    if (!exists(configFilename))
+    {
+        if (haveCustomConfigFile)
+        {
+            stderr.writefln("[WARN] Config file '%s' not found", configFilename);
+        }
+        return [];
+    }
 
     try
     {
@@ -660,7 +670,7 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args)
     }
     catch (ErrnoException e)
     {
-        stderr.writefln("Error opening config file: %s", e.msg);
+        stderr.writefln("[ERROR] Couldn't open config file: %s", e.msg);
         return [];
     }
 
