@@ -1,5 +1,4 @@
 module test;
-
 import zconfig;
 
 void main() {}

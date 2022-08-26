@@ -10,13 +10,8 @@
     "targetPath": "bin",
     "configurations": [
         {
-            "name": "debug",
-            "excludeSourceFiles": ["source/test.d"],
-            "targetType": "library"
-        },
-        {
             "name": "unittest",
-            "mainSourceFile": "source/test.d",
+            "mainSourceFile": "test.d",
             "targetType": "executable"
         }
     ]
