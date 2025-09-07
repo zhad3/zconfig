@@ -18,23 +18,15 @@
  *
  * int main(string[] args)
  * {
- *     string[] configArgs = getConfigArguments!Config("myconf.conf", args);
- *
- *     if (configArgs.length > 0)
- *     {
- *         import std.array : insertInPlace;
- *
- *         // Prepend them into the command line args
- *         args.insertInPlace(1, configArgs);
- *     }
+ *     import std.getopt : GetoptResult, GetOptException;
  *
  *     MyConfig conf;
- *     bool helpWanted = false;
+ *     ConfigLoaderConfig cfc = { configFilename: "myconf.conf" };
+ *     GetoptResult helpInformation;
  *
- *     import std.getopt : GetOptException;
  *     try
  *     {
- *         conf = initializeConfig!(MyConfig, usage)(args, helpWanted);
+ *         conf = loadConfig!(MyConfig, usage)(args, helpInformation, cfc);
  *     }
  *     catch (GetOptException e)
  *     {
@@ -43,7 +35,7 @@
  *         return 1;
  *     }
  *
- *     if (helpWanted)
+ *     if (helpInformation.helpWanted)
  *     {
  *         return 0;
  *     }
@@ -268,6 +260,14 @@ enum Required;
  * Returns:
  *   A fully filled out `ConfigType` struct
  *
+ * Bugs:
+ *   If an array type has a default value then that value will always be present
+ *   in the resulting config no matter the value provided through the config file or
+ *   cli arguments.
+ *
+ * Deprecated:
+ *   Superseded by [loadConfig].
+ *
  * Examples:
  * ---
  * Only parse command line arguments
@@ -309,16 +309,121 @@ enum Required;
 ConfigType initializeConfig(ConfigType, string usage)(ref string[] args, out bool helpWanted)
 {
     ConfigType newConf;
+    auto oldArraySep = arraySep;
     arraySep = ",";
     mixin(generateHandlerProxyFunctions!(ConfigType, newConf.stringof));
     mixin(`auto helpInformation = getopt(`, args.stringof,
             generateGetoptArgumentList!(ConfigType, newConf.stringof), `);`);
+    arraySep = oldArraySep;
     if (helpInformation.helpWanted)
     {
         defaultGetoptPrinter(usage, helpInformation.options);
         helpWanted = true;
     }
     return newConf;
+}
+
+import std.typecons : Flag, Yes;
+
+/**
+ * Configuration for the config loading process.
+ */
+struct ConfigLoaderConfig
+{
+    /// The standard filename to use to look for a config file. Can be empty if no config file is used.
+    string configFilename;
+    /// Whether to try and load a config file.
+    Flag!"enableConfigFile" enableConfigFile = Yes.enableConfigFile;
+    /// Whether to print the default getopt help text in case it is needed or requested.
+    Flag!"printHelp" printHelp = Yes.printHelp;
+}
+
+/**
+ * Load config from cli arguments and a config file. Under the hood it performs a call to getopt.
+ *
+ * The template `ConfigType` is the plain old data struct that describes
+ * the options that are used to generate the getopt parameter list.
+ * `usage`  is used for the [defaultGetoptPrinter] for the usage description when `-h`
+ * is provided in the args unless `printHelp` in the config has been disabled.
+ *
+ * Params:
+ *   args = The arguments which the program was invoked with
+ *   helpInformation = An out parameter that is set to the result of getopt
+ *   config = Optional config to customize the config loading process
+ * Returns:
+ *   A fully filled out `ConfigType` struct
+ */
+ConfigType loadConfig(ConfigType, string usage)(ref string[] args, out GetoptResult helpInformation, ConfigLoaderConfig config = ConfigLoaderConfig.init)
+{
+    import std.exception : enforce;
+    import std.array : empty;
+    import std.typecons : No;
+    enforce(config.enableConfigFile == No.enableConfigFile || (config.enableConfigFile == Yes.enableConfigFile && !config.configFilename.empty),
+            "No config filename given.");
+
+    ConfigType newConf;
+
+    auto oldArraySep = arraySep;
+    arraySep = ",";
+
+    auto parseResult = parseConfigStructAndCliArguments!ConfigType(config.configFilename, args);
+    string[] configArguments = [];
+    if (config.enableConfigFile == Yes.enableConfigFile)
+    {
+        configArguments = getConfigArguments!ConfigType(config.configFilename, args, parseResult);
+    }
+
+    unsetDefaultArrayValuesIfSet!ConfigType(newConf, parseResult, configArguments);
+
+    auto combinedArguments = args[0] ~ configArguments ~ args[1..$];
+
+    mixin(generateHandlerProxyFunctions!(ConfigType, newConf.stringof));
+    mixin(`helpInformation = getopt(`, combinedArguments.stringof,
+            generateGetoptArgumentList!(ConfigType, newConf.stringof), `);`);
+
+    if (helpInformation.helpWanted && config.printHelp == Yes.printHelp)
+    {
+        defaultGetoptPrinter(usage, helpInformation.options);
+    }
+
+    arraySep = oldArraySep;
+
+    return newConf;
+}
+
+unittest
+{
+    struct MyConfig
+    {
+        @Desc("My Array.")
+        string[] filenames = ["default-filename"];
+    }
+
+    string[] cliArgs = ["unittest"];
+    GetoptResult helpInformation;
+    ConfigLoaderConfig cfc = { configFilename: "test-conf/test-array.conf" };
+    auto conf = loadConfig!(MyConfig, "Usage")(cliArgs, helpInformation, cfc);
+
+    assert(conf.filenames.length == 1);
+    assert(conf.filenames[0] == "filename-from-config");
+}
+
+unittest
+{
+    struct MyConfig
+    {
+        @Desc("My Array.")
+        string[] filenames = ["default-filename"];
+    }
+
+    string[] cliArgs = ["unittest"];
+    GetoptResult helpInformation;
+    import std.typecons : No;
+    ConfigLoaderConfig cfc = { enableConfigFile: No.enableConfigFile };
+    auto conf = loadConfig!(MyConfig, "Usage")(cliArgs, helpInformation, cfc);
+
+    assert(conf.filenames.length == 1);
+    assert(conf.filenames[0] == "default-filename");
 }
 
 import std.traits : hasUDA, getUDAs;
@@ -351,6 +456,24 @@ bool isValidHandler(alias handler, alias memberType)()
         return false;
     }
 
+}
+
+private void unsetDefaultArrayValuesIfSet(ConfigType)(ref ConfigType newConf, ConfigParseResult parseResult, string[] configArguments)
+{
+    foreach (memberName; __traits(allMembers, ConfigType))
+    {
+        import std.traits : isArray, isSomeString;
+        auto member = __traits(getMember, newConf, memberName);
+        static if (isArray!(typeof(member)) && !isSomeString!(typeof(member)))
+        {
+            import std.utf : toUTF8;
+            import std.algorithm : canFind;
+            if (memberName in parseResult.argMap || configArguments.canFind([optionChar].toUTF8 ~ [optionChar].toUTF8 ~ memberName))
+            {
+                __traits(getMember, newConf, memberName) = [];
+            }
+        }
+    }
 }
 
 private string generateHandlerProxyFunctions(ConfigType, string configStructName)()
@@ -494,6 +617,127 @@ private auto getConfigMemberUDAs(ConfigType, string memberName)()
     return arg;
 }
 
+import std.container : RedBlackTree;
+
+private struct ConfigParseResult
+{
+    RedBlackTree!string identifierMap;
+    string[string] shortnameLookupMap;
+    bool haveCustomConfigFile;
+    string configFileMember;
+    string configFilename;
+    RedBlackTree!string argMap;
+}
+
+private ConfigParseResult parseConfigStructAndCliArguments(ConfigType)(string filename, string[] args)
+{
+    import std.container : make;
+    import std.algorithm : splitter, each, findSplit;
+    import std.stdio : File, writeln;
+    import std.array : empty, split;
+
+    ConfigParseResult parseResult;
+    parseResult.identifierMap = make!(RedBlackTree!string);
+    parseResult.argMap = make!(RedBlackTree!string);
+    parseResult.haveCustomConfigFile = false;
+
+    foreach (memberName; __traits(allMembers, ConfigType))
+    {
+        immutable argument = getConfigMemberUDAs!(ConfigType, memberName);
+        static if (!argument.onlyCLI && !argument.configFile)
+        {
+            parseResult.identifierMap.insert(memberName);
+        }
+        static if (argument.configFile)
+        {
+            assert(parseResult.haveCustomConfigFile == false, "Can only have one config member with the 'ConfigFile' attribute.");
+            parseResult.haveCustomConfigFile = true;
+            parseResult.configFileMember = memberName;
+        }
+        argument.shortname.splitter('|').each!(name => parseResult.shortnameLookupMap[name] = memberName);
+    }
+
+    bool argIsConfig = false;
+
+    // Create mappings of each option and extract the special 'ConfigFile'
+    // value if it was provided. The mappings are used to compare against
+    // the values provided in the configuration file.
+    foreach (arg; args)
+    {
+        if (argIsConfig)
+        {
+            parseResult.configFilename = arg;
+            argIsConfig = false;
+            continue;
+        }
+        import std.string : indexOf;
+
+        auto optionIdentIndex = arg.indexOf(assignChar);
+        string optionIdent;
+        string optionName;
+
+        if (optionIdentIndex < 0)
+        {
+            optionIdentIndex = arg.length;
+        }
+
+        if (arg.length > 2 && arg[0] == optionChar && arg[1] == optionChar)
+        {
+            optionIdent = arg[2 .. optionIdentIndex];
+            if (optionIdent in parseResult.shortnameLookupMap)
+            {
+                optionName = parseResult.shortnameLookupMap[optionIdent];
+                parseResult.argMap.insert(optionName);
+            }
+            else
+            {
+                optionName = optionIdent;
+                parseResult.argMap.insert(optionName);
+            }
+        }
+        // Check for '-t5' cases where the option 't' has the value '5'
+        else if (arg.length > 2 && arg[0] == optionChar && arg[1] != optionChar &&
+                (cast(string) [arg[1]]) in parseResult.shortnameLookupMap)
+        {
+            optionName = parseResult.shortnameLookupMap[cast(string) [arg[1]]];
+            parseResult.argMap.insert(optionName);
+        }
+        else if (arg.length > 1 && arg[0] == optionChar)
+        {
+            optionIdent = arg[1 .. optionIdentIndex];
+            if (optionIdent in parseResult.shortnameLookupMap)
+            {
+                optionName = parseResult.shortnameLookupMap[optionIdent];
+                parseResult.argMap.insert(optionName);
+            }
+            else
+            {
+                optionName = optionIdent;
+                parseResult.argMap.insert(optionName);
+            }
+        }
+        if (parseResult.haveCustomConfigFile && optionName == parseResult.configFileMember)
+        {
+            if (optionIdentIndex < arg.length)
+            {
+                parseResult.configFilename = arg[optionIdentIndex + 1 .. $];
+            }
+            else
+            {
+                argIsConfig = true;
+            }
+        }
+    }
+
+    if (parseResult.configFilename == parseResult.configFilename.init)
+    {
+        parseResult.configFilename = filename;
+    }
+
+
+    return parseResult;
+}
+
 /***
  * Creates an argument array that contains the options provided in
  * the config file.
@@ -507,6 +751,8 @@ private auto getConfigMemberUDAs(ConfigType, string memberName)()
  * Params:
  *   filename = Filename of the config file
  *   args = Command line arguments provided through main(string[] args)
+ *   parseResult = Use this parse result to compare for already set arguments.
+ *                 If not provided it will gathered automatically.
  *
  * Returns: Config exclusive argument array
  *
@@ -542,131 +788,36 @@ private auto getConfigMemberUDAs(ConfigType, string memberName)()
  * will print: `["--verbose", "true"]`.
  * You can see that our provided `--number=12` has been excluded.
  */
-string[] getConfigArguments(ConfigType)(string filename, string[] args)
+string[] getConfigArguments(ConfigType)(string filename, string[] args, ConfigParseResult parseResult = ConfigParseResult.init)
 {
-    import std.algorithm : splitter, each, findSplit;
+    import std.algorithm : findSplit;
     import std.stdio : File, writeln;
-    import std.array : empty, split;
-
-    int[string] identifierMap;
-    string[string] shortnameLookupMap;
-    bool haveCustomConfigFile = false;
-    string configFileMember;
-    foreach (memberName; __traits(allMembers, ConfigType))
-    {
-        immutable argument = getConfigMemberUDAs!(ConfigType, memberName);
-        static if (!argument.onlyCLI && !argument.configFile)
-        {
-            identifierMap[memberName] = 1;
-        }
-        static if (argument.configFile)
-        {
-            assert(haveCustomConfigFile == false, "Can only have one config member with the 'ConfigFile' attribute.");
-            haveCustomConfigFile = true;
-            configFileMember = memberName;
-        }
-        argument.shortname.splitter('|').each!(name => shortnameLookupMap[name] = memberName);
-    }
-
-    int[string] argMap;
-
-    bool argIsConfig = false;
-    string configFilename;
-
-    // Create mappings of each option and extract the special 'ConfigFile'
-    // value if it was provided. The mappings are used to compare against
-    // the values provided in the configuration file.
-    foreach (arg; args)
-    {
-        if (argIsConfig)
-        {
-            configFilename = arg;
-            argIsConfig = false;
-            continue;
-        }
-        import std.string : indexOf;
-
-        auto optionIdentIndex = arg.indexOf(assignChar);
-        string optionIdent;
-        string optionName;
-
-        if (optionIdentIndex < 0)
-        {
-            optionIdentIndex = arg.length;
-        }
-
-        if (arg.length > 2 && arg[0] == optionChar && arg[1] == optionChar)
-        {
-            optionIdent = arg[2 .. optionIdentIndex];
-            if (optionIdent in shortnameLookupMap)
-            {
-                optionName = shortnameLookupMap[optionIdent];
-                argMap[optionName] = 1;
-            }
-            else
-            {
-                optionName = optionIdent;
-                argMap[optionIdent] = 1;
-            }
-        }
-        // Check for '-t5' cases where the option 't' has the value '5'
-        else if (arg.length > 2 && arg[0] == optionChar && arg[1] != optionChar &&
-                (cast(string) [arg[1]]) in shortnameLookupMap)
-        {
-            optionName = shortnameLookupMap[cast(string) [arg[1]]];
-            argMap[optionName] = 1;
-        }
-        else if (arg.length > 1 && arg[0] == optionChar)
-        {
-            optionIdent = arg[1 .. optionIdentIndex];
-            if (optionIdent in shortnameLookupMap)
-            {
-                optionName = shortnameLookupMap[optionIdent];
-                argMap[optionName] = 1;
-            }
-            else
-            {
-                optionName = optionIdent;
-                argMap[optionIdent] = 1;
-            }
-        }
-        if (haveCustomConfigFile && optionName == configFileMember)
-        {
-            if (optionIdentIndex < arg.length)
-            {
-                configFilename = arg[optionIdentIndex + 1 .. $];
-            }
-            else
-            {
-                argIsConfig = true;
-            }
-        }
-    }
-
-    if (configFilename == configFilename.init)
-    {
-        configFilename = filename;
-    }
+    import std.array : empty;
 
     import std.exception : ErrnoException;
     import std.stdio : stderr;
     import std.file : exists;
 
+    if (parseResult == ConfigParseResult.init)
+    {
+        parseResult = parseConfigStructAndCliArguments!ConfigType(filename, args);
+    }
+
     string[string] confMap;
     File inFile;
 
-    if (!exists(configFilename))
+    if (!exists(parseResult.configFilename))
     {
-        if (haveCustomConfigFile)
+        if (parseResult.haveCustomConfigFile)
         {
-            stderr.writefln("[WARN] Config file '%s' not found", configFilename);
+            stderr.writefln("[WARN] Config file '%s' not found", parseResult.configFilename);
         }
         return [];
     }
 
     try
     {
-        inFile = File(configFilename, "r");
+        inFile = File(parseResult.configFilename, "r");
     }
     catch (ErrnoException e)
     {
@@ -687,8 +838,8 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args)
         {
             // Only keep the values if there wasn't a command line argument
             // with the same identifier
-            if (cast(const string) splitted[0] in identifierMap &&
-                    !(cast(const string) splitted[0] in argMap))
+            if (cast(const string) splitted[0] in parseResult.identifierMap &&
+                    (cast(const string) splitted[0] !in parseResult.argMap))
             {
                 const key = splitted[0].dup;
                 confMap[key] = splitted[2].dup;
@@ -845,7 +996,6 @@ unittest
     assert(configArgs[0] == "--timeout");
     assert(configArgs[1] == "200");
 }
-
 
 /**
  * Writes an example config file to the provided filename.

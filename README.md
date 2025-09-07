@@ -28,7 +28,8 @@ arguments and the config file options with just one struct.
 ## API
 | Function | Description |
 | --- | --- |
-| initializeConfig | Automatically generates the getopt arguments and calls said function with it. |
+| loadConfig | Parses the cli arguments and config file to generate getopt arguments and calls said function with it. |
+| initializeConfig | Deprecated. Use `loadConfig`  instead. Automatically generates the getopt arguments and calls said function with it. |
 | getConfigArguments | Parses the config file and creates an args array ouf of them excluding options provided through the command line. |
 | writeExampleConfigFile | Creates an example config based on an annotated struct. |
 
@@ -59,23 +60,15 @@ enum usage = "My program version 1.0 does things.";
 
 int main(string[] args)
 {
-    string[] configArgs = getConfigArguments!MyConfig("myconf.conf", args);
-
-    if (configArgs.length > 0)
-    {
-        import std.array : insertInPlace;
-
-        // Prepend them into the command line args
-        args.insertInPlace(1, configArgs);
-    }
+    import std.getopt : GetoptResult, GetOptException;
 
     MyConfig conf;
-    bool helpWanted = false;
+    ConfigLoaderConfig cfc = { configFilename: "myconf.conf" };
+    GetoptResult helpInformation;
 
-    import std.getopt : GetOptException;
     try
     {
-        conf = initializeConfig!(MyConfig, usage)(args, helpWanted);
+        conf = loadConfig!(MyConfig, usage)(args, helpInformation, cfc);
     }
     catch (GetOptException e)
     {
@@ -84,7 +77,7 @@ int main(string[] args)
         return 1;
     }
 
-    if (helpWanted)
+    if (helpInformation.helpWanted)
     {
         return 0;
     }
@@ -157,3 +150,4 @@ struct MyConfig
 }
 ```
 Calling the program with e.g. `./myapp --coordinate=20x62` will call the `pointHandler` with `value="20x62"`. It will then get split and the respective fields are set with the resulting config file having `MyConfig.coordinate.x = 20` and `MyConfig.coordinate.y = 62`.
+
