@@ -841,8 +841,8 @@ string[] getConfigArguments(ConfigType)(string filename, string[] args, ConfigPa
             if (cast(const string) splitted[0] in parseResult.identifierMap &&
                     (cast(const string) splitted[0] !in parseResult.argMap))
             {
-                const key = splitted[0].dup;
-                confMap[key] = splitted[2].dup;
+                const key = cast(const string) splitted[0].dup;
+                confMap[key] = cast(const string) splitted[2].dup;
             }
         }
     }
