@@ -10,6 +10,10 @@
     "targetPath": "bin",
     "configurations": [
         {
+            "name": "library",
+            "targetType": "library"
+        },
+        {
             "name": "unittest",
             "mainSourceFile": "test.d",
             "targetType": "executable"
